@@ -160,6 +160,12 @@ always uses the version **without** a leading `v` when upstream used one
 
 ## Notes / limitations
 
+- **Older tags (≤0.2.x)** used `google-breakpad` for the crash reporter. This
+  image does not ship breakpad, so those builds set `-DCRASH_REPORTER=OFF`.
+  **v0.3+** uses vendored cpptrace (`CRASH_HANDLER` / `VENDOR_CPPTRACE`).
+
+## Notes / limitations
+
 - Quickshell must be built against the same Qt it runs with (private APIs). That
   is why Qt is vendored in the tarball.
 - glibc is from Ubuntu 24.04 — older distros may not run the binary.
