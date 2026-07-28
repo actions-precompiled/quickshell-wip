@@ -152,9 +152,8 @@ def smoke_test_tarball(tarball: Path) -> None:
             # xvfb-run -a: pick a free display; -s: server args (screen size / depth)
             cmd = [
                 xvfb_run,
-                "-a",
-                "-s",
-                "-screen 0 1280x720x24",
+                "--auto-servernum",
+                "--server-args=-screen 0 1280x720x24",
                 str(launcher),
                 *args,
             ]
