@@ -67,39 +67,50 @@ the private-API match required by quickshell stays consistent.
 ### Prerequisites
 
 - Docker
-- GitHub CLI (`gh`) for release publishing
 - Network (clones upstream + pulls base image)
+- GitHub CLI (`gh`) only if you use `--publish`
 
 ### Commands
 
 ```bash
-# Build the latest missing upstream tags and publish GitHub releases
+# Build one version locally (default — no GitHub release)
+./create_releases v0.3.0
+
+# Auto-detect tags not released here yet, still local-only
 ./create_releases
 
-# Build one version locally (no gh release) — host arch default
-LOCAL_BUILD=1 ./create_releases v0.3.0
-
 # See what would be built
-DRY_RUN=1 ./create_releases
+./create_releases --dry-run
+# or: DRY_RUN=1 ./create_releases
 
 # Explicit target(s)
-TARGETS=linux-amd64 LOCAL_BUILD=1 ./create_releases v0.3.0
-TARGETS="linux-amd64 linux-aarch64" LOCAL_BUILD=1 ./create_releases v0.3.0
+TARGETS=linux-amd64 ./create_releases v0.3.0
+TARGETS="linux-amd64 linux-aarch64" ./create_releases v0.3.0
+
+# Build and publish GitHub releases (opt-in)
+./create_releases --publish
+./create_releases --publish v0.3.0
+# or: PUBLISH=1 ./create_releases v0.3.0
 ```
 
-`create_releases` is a stdlib Python script (`python3 ./create_releases` also works).
+`create_releases` is a uv script (`#!/usr/bin/env -S uv run --script`, stdlib deps only).
+Install tools with `mise install` (see `mise.toml`). Then run `./create_releases …`.
 Default `TARGETS` matches the host (`linux-amd64` or `linux-aarch64`).
+**Publish is off by default** so local builds are safe.
 
-Environment variables:
-
-| Variable | Meaning |
-|----------|---------|
-| `LOCAL_BUILD` | Build only; skip `gh release create/upload` |
-| `DRY_RUN` | List versions, do not build |
-| `TARGETS` | Space-separated targets (default `linux-amd64`) |
+| Flag / env | Meaning |
+|------------|---------|
+| `--publish` / `PUBLISH=1` | Create GitHub releases and upload tarballs |
+| `--dry-run` / `DRY_RUN=1` | List versions, do not build |
+| `--skip-smoke` / `SKIP_SMOKE=1` | Skip post-build smoke test |
+| `TARGETS` | Space-separated targets (default: host arch) |
 | `BUILD_OUTPUT_DIR` | Output root (default `$PWD/target`) |
 | `SKIP_IMAGE_BUILD` | Reuse an already-built `quickshell-buildenv:local` |
 | `IMAGE_NAME` / `IMAGE_TAG` | Override image name |
+
+After each successful build, `create_releases` extracts the tarball and runs
+`quickshell --help` / `--version` (layout + dynamic linker smoke). Publish only
+runs if that passes.
 
 ### What the container does
 
@@ -121,8 +132,8 @@ Distributor flag passed to CMake: `actions-precompiled`.
 
 No schedule cron: nothing publishes unless you run **Publish Missing Releases** by hand.
 
-Orchestration is `create_releases` (Python 3 **stdlib only**): version planning via
-the GitHub API (`urllib`), then it puppets `docker` / `gh` through `subprocess`.
+Orchestration is `create_releases` (uv script, stdlib + `curl`/`docker`/`gh`):
+HTTPS via **curl** (system CA store), then it puppets `docker` / `gh`.
 
 ## Versioning
 

@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
 """Orchestrate quickshell prebuilds. Python 3 stdlib only (puppet for docker/gh)."""
 
 from __future__ import annotations
@@ -9,8 +13,8 @@ import os
 import shutil
 import subprocess
 import sys
-import urllib.error
-import urllib.request
+import tarfile
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -48,22 +52,174 @@ def run(cmd: list[str], *, check: bool = True, **kwargs) -> subprocess.Completed
     return subprocess.run(cmd, check=check, **kwargs)
 
 
-def github_api_json(path: str) -> object:
-    """GET api.github.com path using stdlib. Uses GH_TOKEN / GITHUB_TOKEN if set."""
-    url = f"https://api.github.com{path}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "actions-precompiled-quickshell",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
+def version_bare(version: str) -> str:
+    return version[1:] if version.startswith("v") else version
+
+
+def find_tarballs(out_root: Path, version: str, target: str) -> list[Path]:
+    bare = version_bare(version)
+    d = out_root / target
+    if not d.is_dir():
+        return []
+    matches = sorted(d.glob(f"quickshell-{bare}-{target}.tar.gz"))
+    if matches:
+        return matches
+    # Fallback: any tarball for this target that mentions the version
+    return sorted(
+        p
+        for p in d.glob("*.tar.gz")
+        if bare in p.name or version in p.name
     )
+
+
+def smoke_test_tarball(tarball: Path) -> None:
+    """Extract the package and verify the launcher runs (stdlib only)."""
+    eprint(f"\nSmoke test: {tarball.name}")
+    if not tarball.is_file():
+        raise FileNotFoundError(f"tarball missing: {tarball}")
+
+    with tempfile.TemporaryDirectory(prefix="qs-smoke-") as tmp:
+        tmp_path = Path(tmp)
+        with tarfile.open(tarball, "r:gz") as tf:
+            # Python 3.12+ filter=; older uses default extract
+            try:
+                tf.extractall(tmp_path, filter="data")
+            except TypeError:
+                tf.extractall(tmp_path)
+
+        # Layout: quickshell/{bin,lib,plugins,...}
+        roots = [p for p in tmp_path.iterdir() if p.is_dir()]
+        if len(roots) != 1:
+            raise RuntimeError(
+                f"expected one top-level dir in tarball, got: {[p.name for p in roots]}"
+            )
+        prefix = roots[0]
+        bin_dir = prefix / "bin"
+        launcher = bin_dir / "quickshell"
+        qs = bin_dir / "qs"
+        real_bin = bin_dir / "quickshell.bin"
+        lib_dir = prefix / "lib"
+        plugins = prefix / "plugins"
+        buildinfo = prefix / "BUILDINFO.txt"
+
+        required = {
+            "bin/quickshell": launcher,
+            "bin/qs": qs,
+            "bin/quickshell.bin": real_bin,
+            "lib/": lib_dir,
+            "plugins/": plugins,
+            "BUILDINFO.txt": buildinfo,
+        }
+        missing = [name for name, path in required.items() if not path.exists()]
+        if missing:
+            raise RuntimeError(f"package missing paths: {missing}")
+
+        if not os.access(launcher, os.X_OK):
+            raise RuntimeError(f"launcher not executable: {launcher}")
+
+        eprint("--- BUILDINFO ---")
+        eprint(buildinfo.read_text(encoding="utf-8", errors="replace").rstrip())
+
+        def is_loader_error(text: str) -> bool:
+            low = text.lower()
+            needles = (
+                "error while loading shared libraries",
+                "cannot open shared object",
+                "cannot open shared object file",
+            )
+            return any(n in low for n in needles)
+
+        # Loader / CLI smoke: --help and --version without a display server
+        for args in (["--help"], ["--version"]):
+            cmd = [str(launcher), *args]
+            eprint("+", " ".join(cmd))
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={
+                    **os.environ,
+                    "QT_QPA_PLATFORM": "offscreen",
+                },
+            )
+            out = (proc.stdout or "") + (proc.stderr or "")
+            for line in out.splitlines()[:12]:
+                eprint(" ", line)
+
+            if is_loader_error(out):
+                raise RuntimeError(f"smoke failed for {args}: dynamic linker error")
+
+            if args == ["--help"]:
+                if "usage:" not in out.lower() and "options:" not in out.lower():
+                    raise RuntimeError(
+                        f"smoke failed for --help: no usage text (exit {proc.returncode})"
+                    )
+            elif args == ["--version"]:
+                if not out.strip():
+                    raise RuntimeError(
+                        f"smoke failed for --version: empty output (exit {proc.returncode})"
+                    )
+
+        eprint(f"✓ Smoke test passed: {tarball.name}")
+
+
+def smoke_test_version(version: str, targets: list[str], out_root: Path) -> None:
+    if env_flag("SKIP_SMOKE"):
+        eprint("SKIP_SMOKE set — skipping smoke tests")
+        return
+    eprint("\n" + "=" * 40)
+    eprint(f"Smoke testing {version}")
+    eprint("=" * 40)
+    for target in targets:
+        tarballs = find_tarballs(out_root, version, target)
+        if not tarballs:
+            raise FileNotFoundError(
+                f"no tarball for {version} / {target} under {out_root / target}"
+            )
+        for tarball in tarballs:
+            smoke_test_tarball(tarball)
+
+
+def curl_json(url: str, *, headers: list[tuple[str, str]] | None = None) -> object:
+    """GET JSON via curl (system CA store; avoids broken Python SSL on NixOS)."""
+    if not shutil.which("curl"):
+        raise RuntimeError("curl is required for HTTPS fetches")
+
+    cmd = [
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--location",
+        "--max-time",
+        "60",
+        "-H",
+        "Accept: application/vnd.github+json",
+        "-H",
+        "User-Agent: actions-precompiled-quickshell",
+        "-H",
+        "X-GitHub-Api-Version: 2022-11-28",
+    ]
+    for key, value in headers or []:
+        cmd.extend(["-H", f"{key}: {value}"])
+    cmd.append(url)
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"curl failed ({proc.returncode}) for {url}: {err}")
+    return json.loads(proc.stdout)
+
+
+def github_api_json(path: str) -> object:
+    """GET api.github.com path via curl. Uses GH_TOKEN / GITHUB_TOKEN if set."""
+    url = f"https://api.github.com{path}"
+    headers: list[tuple[str, str]] = []
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.load(resp)
+        headers.append(("Authorization", f"Bearer {token}"))
+    return curl_json(url, headers=headers)
 
 
 def list_upstream_tags() -> list[str]:
@@ -119,7 +275,7 @@ def list_released_tags() -> list[str]:
             if len(data) < 100:
                 break
             page += 1
-    except urllib.error.HTTPError as exc:
+    except RuntimeError as exc:
         eprint(f"Warning: could not list releases ({exc}); assuming none")
         return []
     return tags
@@ -233,7 +389,9 @@ Upstream: https://github.com/quickshell-mirror/quickshell
     eprint(f"✓ Released {release_tag}")
 
 
-def build_release(version: str, targets: list[str], out_root: Path) -> None:
+def build_release(
+    version: str, targets: list[str], out_root: Path, *, publish: bool
+) -> None:
     eprint("\n" + "=" * 40)
     eprint(f"Building quickshell version {version}")
     eprint("=" * 40)
@@ -247,8 +405,10 @@ def build_release(version: str, targets: list[str], out_root: Path) -> None:
         if d.is_dir():
             run(["ls", "-lh", str(d)], check=False)
 
-    if env_flag("LOCAL_BUILD"):
-        eprint("LOCAL_BUILD mode — skipping GitHub release")
+    smoke_test_version(version, targets, out_root)
+
+    if not publish:
+        eprint("Local build only — pass --publish to create a GitHub release")
         return
 
     publish_release(version, targets, out_root)
@@ -256,18 +416,39 @@ def build_release(version: str, targets: list[str], out_root: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Build (and optionally publish) precompiled quickshell tarballs."
+        description=(
+            "Build precompiled quickshell tarballs. "
+            "Local by default; use --publish to upload GitHub releases."
+        )
     )
     parser.add_argument(
         "versions",
         nargs="*",
         help="Upstream tags to build (default: tags not yet released here)",
     )
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Create GitHub releases and upload tarballs (also: PUBLISH=1)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List versions/targets and exit (also: DRY_RUN=1)",
+    )
+    parser.add_argument(
+        "--skip-smoke",
+        action="store_true",
+        help="Skip post-build smoke tests (also: SKIP_SMOKE=1)",
+    )
     args = parser.parse_args(argv)
+    if args.skip_smoke:
+        os.environ["SKIP_SMOKE"] = "1"
 
     targets = targets_from_env()
     versions = versions_to_build(args.versions)
     out_root = build_output_dir()
+    publish = args.publish or env_flag("PUBLISH")
 
     if not versions:
         eprint("No versions to build.")
@@ -276,15 +457,16 @@ def main(argv: list[str] | None = None) -> int:
     eprint(f"\nVersions to build ({len(versions)}):")
     for v in versions:
         eprint(f"  - {v}  [targets: {' '.join(targets)}]")
+    eprint(f"Publish: {'yes' if publish else 'no (local only)'}")
 
-    if env_flag("DRY_RUN"):
-        eprint("DRY_RUN set — exiting without building")
+    if args.dry_run or env_flag("DRY_RUN"):
+        eprint("Dry-run — exiting without building")
         return 0
 
     ensure_image()
 
     for version in versions:
-        build_release(version, targets, out_root)
+        build_release(version, targets, out_root, publish=publish)
 
     eprint("\n✓ All requested builds finished")
     return 0

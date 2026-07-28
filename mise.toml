@@ -1,3 +1,4 @@
 [tools]
 # Host-side helpers only — the actual build runs inside Docker.
-jq = "latest"
+uv = "0.11.33"
+jq = "1.8.2"

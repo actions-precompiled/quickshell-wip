@@ -86,14 +86,16 @@ jobs:
       - name: Build buildenv image (native arch)
         run: docker build -t quickshell-buildenv:local .
 
-      - name: Build tarball
+      - name: Install mise tools (uv)
+        uses: jdx/mise-action@v2
+
+      - name: Build tarball (includes smoke test)
         env:
-          LOCAL_BUILD: "1"
           SKIP_IMAGE_BUILD: "1"
           IMAGE_NAME: quickshell-buildenv
           IMAGE_TAG: local
           TARGETS: ${{ matrix.config.target }}
-        run: python3 ./create_releases "${{ matrix.version }}"
+        run: ./create_releases "${{ matrix.version }}"
 
       - name: Upload tarball artifact
         uses: actions/upload-artifact@v4

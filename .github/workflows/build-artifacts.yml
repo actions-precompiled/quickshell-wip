@@ -27,7 +27,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python3 <<'PY'
-          import json, os, importlib.util, urllib.request
+          import json, os, importlib.util
           from pathlib import Path
 
           out = Path(os.environ["GITHUB_OUTPUT"])
@@ -41,19 +41,10 @@ jobs:
           spec.loader.exec_module(mod)
 
           missing = mod.versions_to_build([])
-          # Smoke-build the newest upstream release tag (stable pointer)
-          req = urllib.request.Request(
-              "https://api.github.com/repos/quickshell-mirror/quickshell/releases/latest",
-              headers={
-                  "Accept": "application/vnd.github+json",
-                  "User-Agent": "actions-precompiled-quickshell",
-              },
-          )
-          token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-          if token:
-              req.add_header("Authorization", f"Bearer {token}")
-          with urllib.request.urlopen(req, timeout=60) as resp:
-              latest = json.load(resp)["tag_name"]
+          # Newest upstream release tag (curl → system CA store)
+          latest = mod.github_api_json(
+              "/repos/quickshell-mirror/quickshell/releases/latest"
+          )["tag_name"]
 
           missing_json = json.dumps(missing)
           print(f"Latest upstream: {latest}")
@@ -94,14 +85,16 @@ jobs:
       - name: Build buildenv image (native arch)
         run: docker build -t quickshell-buildenv:local .
 
-      - name: Build tarball (LOCAL_BUILD — no release)
+      - name: Install mise tools (uv)
+        uses: jdx/mise-action@v2
+
+      - name: Build tarball (local only; includes smoke test)
         env:
-          LOCAL_BUILD: "1"
           SKIP_IMAGE_BUILD: "1"
           IMAGE_NAME: quickshell-buildenv
           IMAGE_TAG: local
           TARGETS: ${{ matrix.target }}
-        run: python3 ./create_releases "${{ needs.plan.outputs.build_tag }}"
+        run: ./create_releases "${{ needs.plan.outputs.build_tag }}"
 
       - name: Upload tarball artifact
         uses: actions/upload-artifact@v4
