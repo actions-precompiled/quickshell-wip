@@ -137,6 +137,19 @@ No schedule cron: nothing publishes unless you run **Publish Missing Releases** 
 Orchestration is `create_releases` (uv script, stdlib + `curl`/`docker`/`gh`):
 HTTPS via **curl** (system CA store), then it puppets `docker` / `gh`.
 
+## Example config
+
+A minimal top bar lives in [`examples/hello/`](examples/hello/) for manual testing:
+
+```bash
+# after extract + PATH
+qs -p examples/hello/shell.qml
+# or
+qs -c examples/hello
+```
+
+See [examples/README.md](examples/README.md).
+
 ## Versioning
 
 Release tags track **upstream** tags (`v0.3.0`, `0.2.1`, …). The tarball name
