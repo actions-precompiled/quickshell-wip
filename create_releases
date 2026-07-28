@@ -120,106 +120,74 @@ def smoke_test_tarball(tarball: Path) -> None:
         eprint("--- BUILDINFO ---")
         eprint(buildinfo.read_text(encoding="utf-8", errors="replace").rstrip())
 
-        def is_hard_loader_error(text: str) -> bool:
-            """True only for missing non-GPU system libs; EGL/GL are soft on headless CI."""
+        # Xvfb = X Virtual Framebuffer (shadow/virtual X server for headless GUI smoke)
+        xvfb_run = shutil.which("xvfb-run")
+        if not xvfb_run:
+            raise RuntimeError(
+                "smoke requires Xvfb (xvfb-run). Install: apt install xvfb "
+                "(plus mesa GL/EGL libs, e.g. libgl1 libegl1 libglx-mesa0)"
+            )
+        eprint(f"Using Xvfb via {xvfb_run}")
+
+        def is_loader_error(text: str) -> bool:
             low = text.lower()
-            if not any(
+            return any(
                 s in low
                 for s in (
                     "error while loading shared libraries",
                     "cannot open shared object",
                     "cannot open shared object file",
                 )
-            ):
-                return False
-            # Expected to be missing / flaky without a GPU stack in CI runners
-            soft = (
-                "libegl",
-                "libgl.",
-                "libglx",
-                "libgles",
-                "libopengl",
-                "libgbm",
-                "libdrm",
-                "libwayland",
-                "libxkbcommon",
             )
-            # If the only missing libs look GPU/display-related, treat as soft
-            missing_libs = [
-                line for line in text.splitlines() if "not found" in line.lower()
-                or "cannot open shared object" in line.lower()
-            ]
-            if missing_libs and all(
-                any(s in line.lower() for s in soft) for line in missing_libs
-            ):
-                return False
-            if any(s in low for s in soft) and "usage:" in low:
-                return False
-            return True
 
-        def is_soft_display_error(text: str) -> bool:
-            low = text.lower()
-            soft_markers = (
-                "libegl",
-                "could not load the qt platform",
-                "this application failed to start",
-                "no qt platform plugin",
-                "qt.qpa",
-                "failed to create",
-                "opengl",
-                "egl",
-            )
-            return any(m in low for m in soft_markers)
+        # Real X11 display under Xvfb; xcb is the usual Qt desktop path
+        smoke_env = {
+            **os.environ,
+            "QT_QPA_PLATFORM": os.environ.get("QT_QPA_PLATFORM", "xcb"),
+            "QT_DEBUG_PLUGINS": "0",
+            "LIBGL_ALWAYS_SOFTWARE": "1",
+        }
 
-        # Prefer CLI over GUI: offscreen still pulls EGL on some Qt builds
         for args in (["--help"], ["--version"]):
-            cmd = [str(launcher), *args]
+            # xvfb-run -a: pick a free display; -s: server args (screen size / depth)
+            cmd = [
+                xvfb_run,
+                "-a",
+                "-s",
+                "-screen 0 1280x720x24",
+                str(launcher),
+                *args,
+            ]
             eprint("+", " ".join(cmd))
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60,
-                env={
-                    **os.environ,
-                    "QT_QPA_PLATFORM": "offscreen",
-                    "QT_DEBUG_PLUGINS": "0",
-                },
+                timeout=90,
+                env=smoke_env,
             )
             out = (proc.stdout or "") + (proc.stderr or "")
-            for line in out.splitlines()[:16]:
+            for line in out.splitlines()[:20]:
                 eprint(" ", line)
 
-            if is_hard_loader_error(out):
+            if is_loader_error(out):
                 raise RuntimeError(f"smoke failed for {args}: dynamic linker error")
 
             has_usage = "usage:" in out.lower() or "options:" in out.lower()
             if args == ["--help"]:
-                if has_usage:
-                    continue
-                if is_soft_display_error(out):
-                    eprint(
-                        "note: --help hit display/EGL stack in headless env; "
-                        "layout + binary present — treating as soft pass"
+                if not has_usage:
+                    raise RuntimeError(
+                        f"smoke failed for --help under Xvfb "
+                        f"(exit {proc.returncode}): no usage text"
                     )
-                    continue
-                raise RuntimeError(
-                    f"smoke failed for --help: no usage text (exit {proc.returncode})"
-                )
-            if args == ["--version"]:
-                if out.strip() and not is_soft_display_error(out):
-                    continue
-                if out.strip() or is_soft_display_error(out) or has_usage:
-                    if is_soft_display_error(out):
-                        eprint(
-                            "note: --version hit display/EGL stack; soft pass"
-                        )
-                    continue
-                raise RuntimeError(
-                    f"smoke failed for --version: empty output (exit {proc.returncode})"
-                )
+            elif args == ["--version"]:
+                if not out.strip():
+                    raise RuntimeError(
+                        f"smoke failed for --version under Xvfb "
+                        f"(exit {proc.returncode}): empty output"
+                    )
 
-        eprint(f"✓ Smoke test passed: {tarball.name}")
+        eprint(f"✓ Smoke test passed (Xvfb): {tarball.name}")
 
 
 def smoke_test_version(version: str, targets: list[str], out_root: Path) -> None:

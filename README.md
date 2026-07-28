@@ -109,9 +109,10 @@ Default `TARGETS` matches the host (`linux-amd64` or `linux-aarch64`).
 | `SKIP_IMAGE_BUILD` | Reuse an already-built `quickshell-buildenv:local` |
 | `IMAGE_NAME` / `IMAGE_TAG` | Override image name |
 
-After each successful build, `create_releases` extracts the tarball and runs
-`quickshell --help` / `--version` (layout + dynamic linker smoke). Publish only
-runs if that passes.
+Smoke tests extract the tarball and run `quickshell --help` / `--version` under
+**Xvfb** (X Virtual Framebuffer — a shadow/virtual X server via `xvfb-run`), with
+`QT_QPA_PLATFORM=xcb`. Install: `xvfb` plus basic Mesa/X11 libs (`libgl1`,
+`libegl1`, …). CI uploads the tarball first, then runs smoke.
 
 ### What the container does
 
