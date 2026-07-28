@@ -24,7 +24,7 @@ on:
         type: boolean
         default: false
       recreate:
-        description: 'If publish: delete existing release for this tag first, then create fresh'
+        description: 'If publish: delete existing release for this tag first, then create fresh (always rebuild this version)'
         required: false
         type: boolean
         default: false

@@ -133,9 +133,13 @@ Same shape as [tesseract-bin](https://github.com/actions-precompiled/tesseract-b
 |----------|---------|------------|------|
 | `build.yml` | push / PR | **No** | Build **latest** upstream tag for amd64 + aarch64; upload artifacts; Xvfb smoke |
 | `build.yml` | `workflow_dispatch` | optional | Build **one** given version; optional GitHub Release (`publish` / `recreate`) |
-| `dispatch-missing.yml` | `workflow_dispatch` only | optional | Plan missing tags, then `gh workflow run build.yml` **once per version** (isolated failures) |
+| `dispatch-missing.yml` | `workflow_dispatch` only | optional | Fan-out: `gh workflow run build.yml` **once per version** |
 
-Push/PR never publishes. To ship releases: run **Dispatch Missing Builds** with `publish=true` (or dispatch a single **Build** with version + publish).
+Push/PR never publishes.
+
+- **Missing only:** Dispatch Missing Builds with `publish=true` (empty versions).
+- **Recreate all:** same workflow with `recreate=true` (+ usually `publish=true`) — rebuilds **every** upstream tag, not just unreleased ones; each Build deletes+recreates its release when publish is set.
+- **One version:** Build workflow with `version` + optional publish/recreate.
 
 Orchestration is `create_releases` (uv script + curl/docker/gh).
 

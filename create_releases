@@ -285,10 +285,21 @@ def list_upstream_tags() -> list[str]:
 
 def list_released_tags() -> list[str]:
     """Tags already released on *this* repo (via gh if available, else GitHub API)."""
-    # Prefer gh when authenticated (handles private repos cleanly)
+    # Prefer gh when authenticated (handles private repos cleanly).
+    # Default gh list is 30 rows — raise limit so auto-detect is complete.
     if shutil.which("gh"):
         proc = run(
-            ["gh", "release", "list", "--json", "tagName", "--jq", ".[].tagName"],
+            [
+                "gh",
+                "release",
+                "list",
+                "--limit",
+                "1000",
+                "--json",
+                "tagName",
+                "--jq",
+                ".[].tagName",
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -323,20 +334,40 @@ def list_released_tags() -> list[str]:
     return tags
 
 
-def versions_to_build(cli_versions: list[str]) -> list[str]:
+def versions_to_build(
+    cli_versions: list[str],
+    *,
+    force_all: bool | None = None,
+) -> list[str]:
+    """Versions to build / dispatch.
+
+    - Explicit CLI list: those tags (as given).
+    - Empty + force_all / --all / RECREATE / FORCE_ALL: every upstream tag
+      (rebuild path — includes already-released tags).
+    - Empty (default): upstream minus tags already released here.
+    """
+    if force_all is None:
+        force_all = env_flag("RECREATE") or env_flag("FORCE_ALL")
+
     if cli_versions:
-        return cli_versions
+        return list(cli_versions)
 
     eprint(f"Fetching upstream tags from {UPSTREAM_API}...")
-    upstream = set(list_upstream_tags())
-    eprint(f"  upstream: {len(upstream)}")
+    upstream = list_upstream_tags()
+    # Stable-ish order (tags are already page-order from API; sort for determinism)
+    upstream_sorted = sorted(set(upstream))
+    eprint(f"  upstream: {len(upstream_sorted)}")
+
+    if force_all:
+        eprint("  force_all/recreate: all upstream tags (including already released)")
+        return upstream_sorted
 
     eprint("Fetching existing releases from this repository...")
     released = set(list_released_tags())
     eprint(f"  released: {len(released)}")
 
-    missing = sorted(upstream - released)
-    # Keep a stable-ish order: prefer sorting by version-ish string
+    missing = sorted(set(upstream_sorted) - released)
+    eprint(f"  missing: {len(missing)}")
     return missing
 
 
@@ -516,12 +547,35 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Only smoke-test existing tarballs under target/ (no docker build)",
     )
+    parser.add_argument(
+        "--list-to-build",
+        action="store_true",
+        help=(
+            "Print versions that would be built (CLI list or missing vs releases), "
+            "one per line, and exit. With --all / RECREATE=1, list every upstream tag."
+        ),
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "With empty version list: all upstream tags including already released "
+            "(also: RECREATE=1 or FORCE_ALL=1). Used for rebuild/recreate fan-out."
+        ),
+    )
     args = parser.parse_args(argv)
     if args.skip_smoke:
         os.environ["SKIP_SMOKE"] = "1"
+    if args.all:
+        os.environ["FORCE_ALL"] = "1"
+
+    if args.list_to_build:
+        for v in versions_to_build(args.versions, force_all=args.all or None):
+            print(v)
+        return 0
 
     targets = targets_from_env()
-    versions = versions_to_build(args.versions)
+    versions = versions_to_build(args.versions, force_all=args.all or None)
     out_root = build_output_dir()
     publish = args.publish or env_flag("PUBLISH")
     do_smoke = not (args.skip_smoke or env_flag("SKIP_SMOKE"))
