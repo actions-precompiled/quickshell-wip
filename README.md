@@ -127,15 +127,17 @@ Distributor flag passed to CMake: `actions-precompiled`.
 
 ## CI
 
-| Workflow | Trigger | Publishes releases? | What |
-|----------|---------|---------------------|------|
-| `build-artifacts.yml` | **push** / PR to main | **No** | Dry-run plan of missing tags + smoke-build latest for `linux-amd64` and `linux-aarch64`; upload workflow artifacts |
-| `build-releases.yml` | **`workflow_dispatch` only** | **Yes** | Auto-detect (or pass) missing upstream tags → matrix build both arches → create GitHub releases and upload tarballs |
+Same shape as [tesseract-bin](https://github.com/actions-precompiled/tesseract-bin): **one Build run per version**, fan-out via dispatcher.
 
-No schedule cron: nothing publishes unless you run **Publish Missing Releases** by hand.
+| Workflow | Trigger | Publishes? | What |
+|----------|---------|------------|------|
+| `build.yml` | push / PR | **No** | Build **latest** upstream tag for amd64 + aarch64; upload artifacts; Xvfb smoke |
+| `build.yml` | `workflow_dispatch` | optional | Build **one** given version; optional GitHub Release (`publish` / `recreate`) |
+| `dispatch-missing.yml` | `workflow_dispatch` only | optional | Plan missing tags, then `gh workflow run build.yml` **once per version** (isolated failures) |
 
-Orchestration is `create_releases` (uv script, stdlib + `curl`/`docker`/`gh`):
-HTTPS via **curl** (system CA store), then it puppets `docker` / `gh`.
+Push/PR never publishes. To ship releases: run **Dispatch Missing Builds** with `publish=true` (or dispatch a single **Build** with version + publish).
+
+Orchestration is `create_releases` (uv script + curl/docker/gh).
 
 ## Example config
 
