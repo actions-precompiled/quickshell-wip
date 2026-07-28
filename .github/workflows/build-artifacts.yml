@@ -27,18 +27,19 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python3 <<'PY'
-          import json, os, importlib.util
+          import json, os, importlib.machinery, importlib.util
           from pathlib import Path
 
           out = Path(os.environ["GITHUB_OUTPUT"])
           summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
 
-          spec = importlib.util.spec_from_file_location(
-              "create_releases", Path("create_releases")
-          )
+          # create_releases is an extensionless uv script — force SourceFileLoader
+          path = Path("create_releases").resolve()
+          loader = importlib.machinery.SourceFileLoader("create_releases", str(path))
+          spec = importlib.util.spec_from_loader(loader.name, loader)
+          assert spec is not None and spec.loader is not None
           mod = importlib.util.module_from_spec(spec)
-          assert spec.loader is not None
-          spec.loader.exec_module(mod)
+          loader.exec_module(mod)
 
           missing = mod.versions_to_build([])
           # Newest upstream release tag (curl → system CA store)
