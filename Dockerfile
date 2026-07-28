@@ -3,14 +3,19 @@
 # Qt is installed via aqtinstall so we control the ABI and can bundle matching libs.
 FROM ubuntu:24.04
 
-ARG TARGETARCH=amd64
+# Optional override for buildx; default is empty so we detect the *container*
+# arch with uname (plain `docker build` does not always set TARGETARCH, and a
+# Dockerfile default of amd64 wrongly installed x86_64 Qt on arm64 runners).
+ARG TARGETARCH=
 ARG QT_VERSION=6.8.3
 
-# Map Docker TARGETARCH → aqt host / arch / install dir name
-#   amd64 → linux + linux_gcc_64   → gcc_64
-#   arm64 → linux_arm64 + linux_gcc_arm64 → gcc_arm64
+# Map host arch → aqt host / arch / install dir name
+#   amd64/x86_64  → linux + linux_gcc_64      → gcc_64
+#   arm64/aarch64 → linux_arm64 + linux_gcc_arm64 → gcc_arm64
 RUN set -eux; \
-    case "${TARGETARCH}" in \
+    ARCH="${TARGETARCH}"; \
+    if [ -z "${ARCH}" ]; then ARCH="$(uname -m)"; fi; \
+    case "${ARCH}" in \
       amd64|x86_64) \
         echo "linux" > /tmp/qt_host; \
         echo "linux_gcc_64" > /tmp/qt_arch; \
@@ -21,8 +26,9 @@ RUN set -eux; \
         echo "linux_gcc_arm64" > /tmp/qt_arch; \
         echo "gcc_arm64" > /tmp/qt_dir; \
         ;; \
-      *) echo "Unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-    esac
+      *) echo "Unsupported arch=${ARCH} (TARGETARCH='${TARGETARCH}')" >&2; exit 1 ;; \
+    esac; \
+    echo "Qt arch mapping: host=$(cat /tmp/qt_host) arch=$(cat /tmp/qt_arch) dir=$(cat /tmp/qt_dir)"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     QT_VERSION=${QT_VERSION} \

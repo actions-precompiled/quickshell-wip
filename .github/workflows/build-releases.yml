@@ -85,7 +85,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build buildenv image (native arch)
-        run: docker build -t quickshell-buildenv:local .
+        run: |
+          case "$(uname -m)" in
+            x86_64|amd64) ARCH=amd64 ;;
+            aarch64|arm64) ARCH=arm64 ;;
+            *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          docker build --build-arg "TARGETARCH=${ARCH}" -t quickshell-buildenv:local .
+
 
       - name: Install mise tools (uv)
         uses: jdx/mise-action@v2

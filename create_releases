@@ -298,12 +298,33 @@ def versions_to_build(cli_versions: list[str]) -> list[str]:
     return missing
 
 
+def host_docker_arch() -> str:
+    """Map uname -m to Docker TARGETARCH (amd64 / arm64)."""
+    machine = os.uname().machine
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    return machine
+
+
 def ensure_image() -> None:
     if env_flag("SKIP_IMAGE_BUILD"):
         eprint(f"SKIP_IMAGE_BUILD set — using existing {IMAGE_NAME}:{IMAGE_TAG}")
         return
-    eprint(f"Building Docker image {IMAGE_NAME}:{IMAGE_TAG}...")
-    run(["docker", "build", "-t", f"{IMAGE_NAME}:{IMAGE_TAG}", str(ROOT)])
+    arch = host_docker_arch()
+    eprint(f"Building Docker image {IMAGE_NAME}:{IMAGE_TAG} (TARGETARCH={arch})...")
+    run(
+        [
+            "docker",
+            "build",
+            "--build-arg",
+            f"TARGETARCH={arch}",
+            "-t",
+            f"{IMAGE_NAME}:{IMAGE_TAG}",
+            str(ROOT),
+        ]
+    )
 
 
 def build_for_target(version: str, target: str, out_root: Path) -> Path:
