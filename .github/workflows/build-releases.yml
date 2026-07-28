@@ -1,0 +1,189 @@
+name: Publish Missing Releases
+
+# Only manual dispatch creates/uploads GitHub releases.
+# Pushes use build-artifacts.yml (dry-run + workflow artifacts only).
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: 'Specific versions to build (space-separated; leave empty to auto-detect missing upstream tags)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.plan.outputs.versions }}
+      empty: ${{ steps.plan.outputs.empty }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Plan versions to release
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          INPUT_VERSIONS: ${{ inputs.versions }}
+        run: |
+          python3 <<'PY'
+          import json, os, importlib.util
+          from pathlib import Path
+
+          out = Path(os.environ["GITHUB_OUTPUT"])
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          raw = (os.environ.get("INPUT_VERSIONS") or "").strip()
+
+          if raw:
+              versions = raw.split()
+          else:
+              spec = importlib.util.spec_from_file_location(
+                  "create_releases", Path("create_releases")
+              )
+              mod = importlib.util.module_from_spec(spec)
+              assert spec.loader is not None
+              spec.loader.exec_module(mod)
+              versions = mod.versions_to_build([])
+
+          payload = json.dumps(versions)
+          print(f"Versions to publish: {payload}")
+          with out.open("a", encoding="utf-8") as fh:
+              fh.write(f"versions={payload}\n")
+              fh.write(f"empty={'true' if not versions else 'false'}\n")
+          with summary.open("a", encoding="utf-8") as fh:
+              fh.write("## Publish plan\n\n")
+              if versions:
+                  fh.write("Will build and release:\n\n")
+                  for v in versions:
+                      fh.write(f"- `{v}`\n")
+              else:
+                  fh.write("Nothing to do — all upstream tags already released.\n")
+          PY
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.empty != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.plan.outputs.versions) }}
+        config:
+          - target: linux-amd64
+            runner: ubuntu-latest
+          - target: linux-aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.config.runner }}
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build buildenv image (native arch)
+        run: docker build -t quickshell-buildenv:local .
+
+      - name: Build tarball
+        env:
+          LOCAL_BUILD: "1"
+          SKIP_IMAGE_BUILD: "1"
+          IMAGE_NAME: quickshell-buildenv
+          IMAGE_TAG: local
+          TARGETS: ${{ matrix.config.target }}
+        run: python3 ./create_releases "${{ matrix.version }}"
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickshell-${{ matrix.version }}-${{ matrix.config.target }}
+          path: target/${{ matrix.config.target }}/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [plan, build]
+    if: needs.plan.outputs.empty != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: quickshell-*
+          merge-multiple: false
+
+      - name: Create releases and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSIONS_JSON: ${{ needs.plan.outputs.versions }}
+        run: |
+          python3 <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          versions = json.loads(os.environ["VERSIONS_JSON"])
+          root = Path("artifacts")
+
+          def run(cmd):
+              print("+", " ".join(cmd), flush=True)
+              subprocess.run(cmd, check=True)
+
+          for version in versions:
+              tarballs = sorted(root.glob(f"quickshell-{version}-*/*.tar.gz"))
+              if not tarballs:
+                  tarballs = sorted(
+                      p
+                      for p in root.rglob("*.tar.gz")
+                      if version.lstrip("v") in p.name or version in p.name
+                  )
+              if not tarballs:
+                  print(f"No tarballs for {version}", file=sys.stderr)
+                  sys.exit(1)
+
+              notes = f"""Prebuilt quickshell {version} (Qt-bundled, relocatable tree).
+
+          Install: extract the tarball and put `bin/` on your PATH (mise/asdf/manual).
+
+          Assets:
+          {chr(10).join(f'- `{p.name}`' for p in tarballs)}
+
+          Upstream: https://github.com/quickshell-mirror/quickshell
+          """
+              create = subprocess.run(
+                  [
+                      "gh", "release", "create", version,
+                      "--title", f"quickshell {version}",
+                      "--notes", notes,
+                      "--latest=false",
+                  ],
+                  check=False,
+              )
+              if create.returncode != 0:
+                  print(f"release {version} may already exist; uploading assets", flush=True)
+
+              for tarball in tarballs:
+                  run(["gh", "release", "upload", version, "--clobber", str(tarball)])
+              print(f"✓ Released {version}", flush=True)
+          PY
+
+      - name: Summary
+        if: always()
+        env:
+          VERSIONS_JSON: ${{ needs.plan.outputs.versions }}
+        run: |
+          {
+            echo "## Publish complete"
+            echo ""
+            echo "Versions: \`$VERSIONS_JSON\`"
+            echo ""
+            echo "Artifacts:"
+            find artifacts -type f -name '*.tar.gz' -exec ls -lh {} \; || true
+          } >> "$GITHUB_STEP_SUMMARY"

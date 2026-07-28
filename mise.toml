@@ -1,0 +1,3 @@
+[tools]
+# Host-side helpers only — the actual build runs inside Docker.
+jq = "latest"

@@ -1,0 +1,117 @@
+name: Build Artifacts (dry run)
+
+# Pushes and PRs never publish releases — only prove the build and upload tarballs.
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      build_tag: ${{ steps.plan.outputs.build_tag }}
+      missing: ${{ steps.plan.outputs.missing }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Dry-run plan (missing releases + smoke-build tag)
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 <<'PY'
+          import json, os, importlib.util, urllib.request
+          from pathlib import Path
+
+          out = Path(os.environ["GITHUB_OUTPUT"])
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+
+          spec = importlib.util.spec_from_file_location(
+              "create_releases", Path("create_releases")
+          )
+          mod = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(mod)
+
+          missing = mod.versions_to_build([])
+          # Smoke-build the newest upstream release tag (stable pointer)
+          req = urllib.request.Request(
+              "https://api.github.com/repos/quickshell-mirror/quickshell/releases/latest",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "actions-precompiled-quickshell",
+              },
+          )
+          token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+          if token:
+              req.add_header("Authorization", f"Bearer {token}")
+          with urllib.request.urlopen(req, timeout=60) as resp:
+              latest = json.load(resp)["tag_name"]
+
+          missing_json = json.dumps(missing)
+          print(f"Latest upstream: {latest}")
+          print(f"Missing releases (dry-run): {missing_json}")
+
+          with out.open("a", encoding="utf-8") as fh:
+              fh.write(f"build_tag={latest}\n")
+              fh.write(f"missing={missing_json}\n")
+
+          with summary.open("a", encoding="utf-8") as fh:
+              fh.write("## Dry-run plan\n\n")
+              fh.write(f"- Smoke-build tag: `{latest}`\n")
+              fh.write(f"- Missing releases (would publish on workflow_dispatch): ")
+              if missing:
+                  fh.write(", ".join(f"`{v}`" for v in missing) + "\n")
+              else:
+                  fh.write("_none_\n")
+              fh.write("\nNo GitHub releases are created on push/PR.\n")
+          PY
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-latest
+          - target: linux-aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build buildenv image (native arch)
+        run: docker build -t quickshell-buildenv:local .
+
+      - name: Build tarball (LOCAL_BUILD — no release)
+        env:
+          LOCAL_BUILD: "1"
+          SKIP_IMAGE_BUILD: "1"
+          IMAGE_NAME: quickshell-buildenv
+          IMAGE_TAG: local
+          TARGETS: ${{ matrix.target }}
+        run: python3 ./create_releases "${{ needs.plan.outputs.build_tag }}"
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quickshell-${{ needs.plan.outputs.build_tag }}-${{ matrix.target }}
+          path: target/${{ matrix.target }}/*.tar.gz
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: List artifacts
+        if: always()
+        run: find target -type f -exec ls -lh {} \; || true
