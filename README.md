@@ -103,6 +103,7 @@ Default `TARGETS` matches the host (`linux-amd64` or `linux-aarch64`).
 | `--publish` / `PUBLISH=1` | Create GitHub releases and upload tarballs |
 | `--dry-run` / `DRY_RUN=1` | List versions, do not build |
 | `--skip-smoke` / `SKIP_SMOKE=1` | Skip post-build smoke test |
+| `--smoke-only` | Only smoke-test existing `target/` tarballs (no build) |
 | `TARGETS` | Space-separated targets (default: host arch) |
 | `BUILD_OUTPUT_DIR` | Output root (default `$PWD/target`) |
 | `SKIP_IMAGE_BUILD` | Reuse an already-built `quickshell-buildenv:local` |

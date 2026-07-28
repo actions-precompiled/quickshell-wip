@@ -102,21 +102,28 @@ jobs:
       - name: Install mise tools (uv)
         uses: jdx/mise-action@v2
 
-      - name: Build tarball (includes smoke test)
+      - name: Build tarball (no smoke — upload first)
         env:
           SKIP_IMAGE_BUILD: "1"
           IMAGE_NAME: quickshell-buildenv
           IMAGE_TAG: local
           TARGETS: ${{ matrix.config.target }}
-        run: ./create_releases "${{ matrix.version }}"
+        run: ./create_releases --skip-smoke "${{ matrix.version }}"
 
       - name: Upload tarball artifact
         uses: actions/upload-artifact@v4
+        if: success() || failure()
         with:
           name: quickshell-${{ matrix.version }}-${{ matrix.config.target }}
           path: target/${{ matrix.config.target }}/*.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+      - name: Smoke test package
+        if: success()
+        env:
+          TARGETS: ${{ matrix.config.target }}
+        run: ./create_releases --smoke-only "${{ matrix.version }}"
 
   publish:
     needs: [plan, build]
