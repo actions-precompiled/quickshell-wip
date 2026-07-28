@@ -1,7 +1,7 @@
 // Minimal quickshell config for smoke-testing a prebuilt package.
 //
-//   qs -p /path/to/examples/hello/shell.qml
-//   qs -c /path/to/examples/hello
+//   quickshell -p shell.qml
+//   quickshell -p /path/to/examples/hello/shell.qml
 //
 // Expect a thin top bar with a label + ticking clock. Quit with Ctrl+C.
 

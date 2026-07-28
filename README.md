@@ -55,7 +55,7 @@ Install example:
 mkdir -p ~/.local/quickshell
 tar -xzf quickshell-0.3.0-linux-amd64.tar.gz -C ~/.local/quickshell --strip-components=1
 export PATH="$HOME/.local/quickshell/bin:$PATH"
-qs --help
+quickshell --help   # or: qs --help
 ```
 
 System libraries such as `libwayland-client`, `libpipewire`, `libpam`, and GPU
@@ -143,9 +143,9 @@ A minimal top bar lives in [`examples/hello/`](examples/hello/) for manual testi
 
 ```bash
 # after extract + PATH
-qs -p examples/hello/shell.qml
-# or
-qs -c examples/hello
+cd examples/hello && quickshell -p shell.qml
+# or from repo root:
+quickshell -p examples/hello/shell.qml
 ```
 
 See [examples/README.md](examples/README.md).

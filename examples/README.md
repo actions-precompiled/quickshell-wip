@@ -1,6 +1,7 @@
 # Example configs
 
-Small configs to verify a prebuilt `qs` / `quickshell` binary on a real desktop.
+Small configs to verify a prebuilt `quickshell` binary on a real desktop
+(`qs` is the same binary via symlink).
 
 ## Prerequisites
 
@@ -13,15 +14,18 @@ Small configs to verify a prebuilt `qs` / `quickshell` binary on a real desktop.
 Top bar that shows a static label and a live clock.
 
 ```bash
-# point -p at the file
-qs -p examples/hello/shell.qml
+cd examples/hello
+quickshell -p shell.qml
+```
 
-# or use the directory as a config (looks for shell.qml)
-qs -c examples/hello
+Or with an absolute/relative path from the repo root:
+
+```bash
+quickshell -p examples/hello/shell.qml
 ```
 
 You should get a dark strip at the top of the screen. Stop with `Ctrl+C` in the
-terminal that launched `qs`.
+terminal that launched it.
 
-If nothing appears, check the compositor logs / `qs` stderr (missing Wayland
+If nothing appears, check the compositor logs / stderr (missing Wayland
 protocols, GPU/GL, or display env vars).
