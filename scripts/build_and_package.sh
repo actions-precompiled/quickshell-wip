@@ -86,26 +86,20 @@ if ! clone_tag "$NORMALIZED_TAG" 2>/dev/null; then
 fi
 
 # --- configure & build ---
-# Crash handling changed across releases:
+# Crash handling changed across releases (search the whole tree — VENDOR_CPPTRACE
+# lives under src/crash/CMakeLists.txt, not the root):
 #   ≤0.2.x: CRASH_REPORTER + google-breakpad (not in this image) → disable
-#   ≥0.3.x: CRASH_HANDLER + cpptrace (VENDOR_CPPTRACE) → enable
+#   ≥0.3.x: CRASH_HANDLER + cpptrace → always VENDOR_CPPTRACE
 CRASH_CMAKE_FLAGS=()
-if grep -qE 'boption\s*\(\s*CRASH_HANDLER' "$SRC_DIR/CMakeLists.txt" 2>/dev/null \
-  || grep -q 'CRASH_HANDLER' "$SRC_DIR/CMakeLists.txt" 2>/dev/null; then
-  # Prefer cpptrace path when present (v0.3+)
-  if grep -q 'VENDOR_CPPTRACE\|cpptrace' "$SRC_DIR/CMakeLists.txt" 2>/dev/null; then
-    CRASH_CMAKE_FLAGS+=(-DCRASH_HANDLER=ON -DVENDOR_CPPTRACE=ON)
-    echo "Crash: CRASH_HANDLER=ON VENDOR_CPPTRACE=ON"
-  else
-    CRASH_CMAKE_FLAGS+=(-DCRASH_HANDLER=ON)
-    echo "Crash: CRASH_HANDLER=ON"
-  fi
-elif grep -qE 'boption\s*\(\s*CRASH_REPORTER|CRASH_REPORTER' "$SRC_DIR/CMakeLists.txt" 2>/dev/null; then
-  # Older tags need breakpad; we do not ship it — disable reporter for prebuilds
+if grep -Rqs --include='CMakeLists.txt' --include='*.cmake' 'CRASH_HANDLER' "$SRC_DIR"; then
+  # Always vendor cpptrace when the option exists (pkg not in image)
+  CRASH_CMAKE_FLAGS+=(-DCRASH_HANDLER=ON -DVENDOR_CPPTRACE=ON)
+  echo "Crash: CRASH_HANDLER=ON VENDOR_CPPTRACE=ON"
+elif grep -Rqs --include='CMakeLists.txt' --include='*.cmake' 'CRASH_REPORTER' "$SRC_DIR"; then
   CRASH_CMAKE_FLAGS+=(-DCRASH_REPORTER=OFF)
   echo "Crash: CRASH_REPORTER=OFF (no google-breakpad in image; pre-0.3 tag)"
 else
-  echo "Crash: no known crash option in CMakeLists.txt"
+  echo "Crash: no known crash option in CMake tree"
 fi
 
 # Prefix /usr → DESTDIR layout is usr/bin, usr/share, ...; we flatten to bin/ share/ after.
