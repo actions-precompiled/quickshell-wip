@@ -15,8 +15,8 @@ aimed at small C/C++ cross builds. Quickshell needs a full **Qt 6 SDK** (includi
 private headers) and many desktop libraries (Wayland, PipeWire, PAM, …). This
 repo uses its own `Dockerfile` instead.
 
-There is also **no Dagger** pipeline here — just Docker + `create_releases`, same
-shape as the other actions-precompiled packages.
+Orchestration is Docker + `create_releases`, same shape as the other
+actions-precompiled packages.
 
 ## Supported targets
 
